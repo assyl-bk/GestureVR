@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ML artifacts (large / regenerable, don't commit)
+ml/gesture_model.h5
+ml/label_classes.npy
+ml/data/raw/*.csv
+
+# Unity
+unity/Library/
+unity/Temp/
+unity/Obj/
+unity/Build/
+unity/Builds/
+unity/Logs/
+unity/UserSettings/
+*.csproj
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Arduino IDE
+*.hex
+build/
