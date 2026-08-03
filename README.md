@@ -19,7 +19,7 @@ labeled gesture dataset for training a 1D-CNN gesture classifier.
 ## Project structure
 
 ```
-GestureVR/
+./
 ├── firmware/
 │   ├── i2c_scanner/              Verifies both sensors are detected
 │   │                             at the correct I2C addresses (0x68, 0x69)
@@ -58,6 +58,9 @@ GestureVR/
 │
 └── README.md
 ```
+
+The repository is intentionally flat at the root now, so the paths above
+match the folders you see in the workspace and on GitHub.
 
 ## Hardware
 
