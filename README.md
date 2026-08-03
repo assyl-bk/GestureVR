@@ -29,6 +29,16 @@ labeled gesture dataset for training a 1D-CNN gesture classifier.
 │   │                             streaming. Good reference / starting
 │   │                             point, or for single-joint tests.
 │   │
+│   ├── get_mac_adress/           Utility sketch to read the ESP32 MAC
+│   │                             address for device setup.
+│   │
+│   ├── hand_esp32_transmitter/   Wearable-side ESP-NOW transmitter.
+│   │                             Sends the hand sensor stream.
+│   │
+│   ├── main_esp32_receiver/      Base ESP32 receiver sketch. This is
+│   │                             the matching side of the wireless
+│   │                             pipeline and the next focus area.
+│   │
 │   └── dual_mpu6050_calibrated/  Main firmware. Reads both sensors,
 │                                 calibrates each at boot, streams
 │                                 CSV: timestamp_ms,label,aw,ax,ay,az,bw,bx,by,bz
@@ -61,6 +71,10 @@ labeled gesture dataset for training a 1D-CNN gesture classifier.
 
 The repository is intentionally flat at the root now, so the paths above
 match the folders you see in the workspace and on GitHub.
+
+The firmware work is centered on the receiver/transmitter pair, with the
+`hand_esp32_transmitter` and `main_esp32_receiver` sketches carrying the
+wireless live-stream path used by the Unity side.
 
 ## Hardware
 
