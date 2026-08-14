@@ -230,4 +230,4 @@ improves stability over hardcoded zero offsets.
   pairs (e.g. hand + lower-arm for the wrist joint), the same
   dual-sensor relative-rotation concept used in this project, across a
   full-body 15-sensor setup. Requires an IEEE DataPort subscription to
-  access the raw files.
+  access the raw files.()
