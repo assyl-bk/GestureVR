@@ -10,24 +10,29 @@ the methodology in:
 
 Key methodological choices matched to that paper:
   - Classification is FRAME-LEVEL (each single timestep is one
-    sample), not window-level -- their Section II.C: "Gesture
-    sequences were sliced into frames and reshaped to remove the
-    temporal dimension, enabling use with frame-based classifiers."
+    sample), not window-level -- their Section II.C.
   - Splits are done at the recording SESSION level (their Section
     II.C, single-subject case), matching our splits.py.
   - Hyperparameters are tuned via grid search (their Section II.F).
-  - Reports accuracy, balanced accuracy, F1, and confusion matrix
-    (their Table III / Fig. 5).
-  - Supports a rotation-only vs. rotation+position ablation (their
-    Section III.A finding: rotational data alone was more robust).
+  - Reports accuracy, balanced accuracy, F1, and confusion matrix.
+  - Supports a rotation-only vs. rotation+position ablation.
+
+NEW: optional velocity features (frame-to-frame deltas), computed per
+session. This gives frame-level classifiers local temporal context --
+distinguishing a genuinely still 'idle' frame (near-zero velocity)
+from a frame that happens to pass through a similar position/
+orientation mid-gesture (non-zero velocity) -- without abandoning the
+paper's frame-based methodology.
 
 Run:
-    python quest_baseline.py                  # rotation + position
-    python quest_baseline.py --rotation-only   # rotation only
+    python quest_baseline.py                        # rotation + position
+    python quest_baseline.py --rotation-only          # rotation only
+    python quest_baseline.py --no-velocity            # disable velocity features
 """
 
 import argparse
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
@@ -56,14 +61,9 @@ SVM_PARAM_GRID = {
     "degree": [2, 3],
     "class_weight": [None, "balanced"],
 }
-#added now 
-import numpy as np
-import numpy.typing as npt
 
-def as_idx(arr) -> npt.NDArray[np.intp]:
-    return np.asarray(arr, dtype=np.intp)
 
-def build_frame_level_dataset(df, rotation_only=False):
+def build_frame_level_dataset(df, rotation_only=False, include_velocity=True):
     """
     Unlike make_windows() (used by the CNN), this treats every single
     timestep as one training sample -- matching the reference paper's
@@ -76,15 +76,26 @@ def build_frame_level_dataset(df, rotation_only=False):
     any_dropout = df[dropout_columns].any(axis=1)
     clean_df = df[~any_dropout].copy()
 
+    if include_velocity:
+        clean_df = clean_df.sort_values(["session_id", "t_rounded"])
+        velocity_frames = []
+        for session_id, group in clean_df.groupby("session_id"):
+            deltas = group[feature_columns].diff().fillna(0.0)
+            deltas.columns = [f"{c}_vel" for c in feature_columns]
+            velocity_frames.append(deltas)
+        velocity_df = pd.concat(velocity_frames)
+        clean_df = pd.concat([clean_df, velocity_df], axis=1)
+        feature_columns = feature_columns + [f"{c}_vel" for c in feature_columns]
+
     X = clean_df[feature_columns].to_numpy()
     y = clean_df["label"].to_numpy()
     groups = clean_df["session_id"].to_numpy()
 
-    return X, y, groups
+    return X, y, groups, feature_columns
 
 
 def run_grid_search(name, estimator, param_grid, X_train, y_train,
-                     X_val, y_val, encoder):
+                     X_val, y_val):
     X_combined = np.concatenate([X_train, X_val])
     y_combined = np.concatenate([y_train, y_val])
     test_fold = np.concatenate([
@@ -125,17 +136,21 @@ def evaluate(name, model, X_test, y_test, encoder):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rotation-only", action="store_true",
-                         help="Use only rotational features (no x/y/z "
-                              "position), matching the reference "
-                              "paper's finding that this is more robust.")
+                         help="Use only rotational features (no x/y/z position).")
+    parser.add_argument("--no-velocity", action="store_true",
+                         help="Disable velocity (frame-to-frame delta) features.")
     args = parser.parse_args()
 
     print("Loading Quest sessions...")
     df = load_all_sessions()
 
+    include_velocity = not args.no_velocity
     print(f"\nBuilding frame-level dataset "
-          f"({'rotation-only' if args.rotation_only else 'rotation+position'})...")
-    X, y_raw, groups = build_frame_level_dataset(df, rotation_only=args.rotation_only)
+          f"({'rotation-only' if args.rotation_only else 'rotation+position'}, "
+          f"{'with' if include_velocity else 'without'} velocity)...")
+    X, y_raw, groups, feature_columns = build_frame_level_dataset(
+        df, rotation_only=args.rotation_only, include_velocity=include_velocity
+    )
     print(f"Total frames: {len(X)}  |  Feature dimension: {X.shape[1]}")
 
     encoder = LabelEncoder()
@@ -143,19 +158,18 @@ def main():
     print(f"Classes: {list(encoder.classes_)}")
 
     print("\nSplitting by recording session (train/val/test):")
-
-    # first split point
-
     trainval_idx, test_idx = session_based_split(y, groups, val_fraction=0.2)
-    trainval_idx = np.asarray(trainval_idx).astype(np.int64)
-    test_idx = np.asarray(test_idx).astype(np.int64)
+    trainval_idx = np.asarray(trainval_idx, dtype=np.int64)
+    test_idx = np.asarray(test_idx, dtype=np.int64)
 
     y_trainval = np.take(y, trainval_idx, axis=0)
     groups_trainval = np.take(groups, trainval_idx, axis=0)
 
-    train_idx_rel, val_idx_rel = session_based_split(y_trainval, groups_trainval, val_fraction=0.2)
-    train_idx_rel = np.asarray(train_idx_rel).astype(np.int64)
-    val_idx_rel = np.asarray(val_idx_rel).astype(np.int64)
+    train_idx_rel, val_idx_rel = session_based_split(
+        y_trainval, groups_trainval, val_fraction=0.2
+    )
+    train_idx_rel = np.asarray(train_idx_rel, dtype=np.int64)
+    val_idx_rel = np.asarray(val_idx_rel, dtype=np.int64)
 
     train_idx = np.take(trainval_idx, train_idx_rel, axis=0)
     val_idx = np.take(trainval_idx, val_idx_rel, axis=0)
@@ -170,9 +184,6 @@ def main():
         return
 
     scaler = StandardScaler()
-    # later, scaling
-
-    scaler = StandardScaler()
     X_train = scaler.fit_transform(np.take(X, train_idx, axis=0))
     X_val = scaler.transform(np.take(X, val_idx, axis=0))
     X_test = scaler.transform(np.take(X, test_idx, axis=0))
@@ -181,17 +192,16 @@ def main():
     y_val = np.take(y, val_idx, axis=0)
     y_test = np.take(y, test_idx, axis=0)
 
-
     results = {}
 
     rf_best = run_grid_search(
         "Random Forest", RandomForestClassifier(random_state=42),
-        RF_PARAM_GRID, X_train, y_train, X_val, y_val, encoder
+        RF_PARAM_GRID, X_train, y_train, X_val, y_val
     )
     results["Random Forest"] = evaluate("Random Forest", rf_best, X_test, y_test, encoder)
 
     svm_best = run_grid_search(
-        "SVM", SVC(), SVM_PARAM_GRID, X_train, y_train, X_val, y_val, encoder
+        "SVM", SVC(), SVM_PARAM_GRID, X_train, y_train, X_val, y_val
     )
     results["SVM"] = evaluate("SVM", svm_best, X_test, y_test, encoder)
 
@@ -201,7 +211,6 @@ def main():
         print(f"{name:<20}{acc:<12.4f}{bal_acc:<15.4f}{f1:<10.4f}")
 
     if hasattr(rf_best, "feature_importances_"):
-        feature_columns = get_feature_columns(rotation_only=args.rotation_only)
         importances = rf_best.feature_importances_
         top_idx = np.argsort(importances)[::-1][:10]
         print("\nTop 10 most important features (Random Forest):")
