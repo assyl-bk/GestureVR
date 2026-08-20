@@ -32,6 +32,6 @@ def build_1dcnn(window_size, num_features, num_classes):
     model.compile(
         optimizer="adam",
         loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
+        metrics=["accuracy"]
     )
     return model

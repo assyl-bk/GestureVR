@@ -2,17 +2,34 @@
 quest_train.py
 ---------------
 Trains a 1D-CNN on the Quest hand-tracking dataset (see
-quest_dataset.py), using a session-based train/val/test split
-(matching quest_baseline.py's splitting for a fair, apples-to-apples
-comparison in the paper).
+quest_dataset.py), using a session-based train/val/test split.
+
+Fixes applied:
+  1. Global random seeding (Python/NumPy/TensorFlow) -- without this,
+     weight initialization and batch shuffling are non-deterministic,
+     producing different accuracy on every run of identical code and
+     data (observed previously: 0.93 vs 0.92 vs 0.78 across runs).
+  2. Final metrics are now computed on the TEST set, not the
+     validation set. The validation set is used only for early
+     stopping / best-epoch selection; reporting validation metrics as
+     "final results" is methodologically invalid, since the
+     validation set influenced model selection.
 
 Run: python quest_train.py
 """
 
+import os
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow import keras
+
+# --- Reproducibility: must happen before any model/layer is built ---
+#SEED = 42
+#keras.utils.set_random_seed(SEED)
+SEEDS = [42, 0, 1, 7, 123]
+os.environ["TF_DETERMINISTIC_OPS"] = "1"  # extra safety for CPU determinism
 
 from quest_dataset import load_all_sessions, make_windows, WINDOW_SIZE, get_feature_columns
 from splits import session_based_split
@@ -20,15 +37,13 @@ from model import build_1dcnn
 
 MODEL_OUTPUT_PATH = "quest_gesture_model.h5"
 
-#added now
-import numpy.typing as npt
 
-def as_idx(arr) -> npt.NDArray[np.intp]:
-    return np.asarray(arr, dtype=np.intp)
+def main(seed):
+    keras.utils.set_random_seed(seed)
 
-
-def main():
-    print("Loading Quest sessions...")
+    print(f"\n{'=' * 60}")
+    print(f"Running experiment with SEED = {seed}")
+    print(f"{'=' * 60}")
     df = load_all_sessions()
     X, y_raw, groups = make_windows(df)
 
@@ -40,7 +55,6 @@ def main():
 
     print("\nSplitting by recording session (train/val/test):")
 
-    # first split point: carve off the test sessions
     trainval_idx, test_idx = session_based_split(y, groups, val_fraction=0.2)
     trainval_idx = np.asarray(trainval_idx).astype(np.int64)
     test_idx = np.asarray(test_idx).astype(np.int64)
@@ -48,7 +62,6 @@ def main():
     y_trainval = np.take(y, trainval_idx, axis=0)
     groups_trainval = np.take(groups, trainval_idx, axis=0)
 
-    # second split point: carve the remainder into train/val
     train_idx_rel, val_idx_rel = session_based_split(
         y_trainval, groups_trainval, val_fraction=0.2
     )
@@ -81,6 +94,8 @@ def main():
     )
     model.summary()
 
+    # Validation set is used ONLY for early stopping / best-epoch
+    # selection -- never for final reported metrics.
     early_stop = EarlyStopping(
         monitor="val_loss", patience=6, restore_best_weights=True
     )
@@ -91,27 +106,89 @@ def main():
         epochs=50,
         batch_size=32,
         callbacks=[early_stop],
+        verbose=2,
     )
 
-    best_epoch = int(np.argmin(history.history["val_loss"])) + 1
+    best_epoch = np.argmin(history.history["val_loss"]) + 1
     print(f"\nBest epoch (lowest val_loss): {best_epoch} (weights restored)")
 
+    # --- FINAL evaluation on the held-out TEST set (never seen during
+    #     training or model selection) ---
     y_pred_probs = model.predict(X_test, verbose=0)
     y_pred = np.argmax(y_pred_probs, axis=1)
 
+    accuracy = np.mean(y_pred == y_test)
+    f1_weighted = f1_score(y_test, y_pred, average="weighted")
+    f1_macro = f1_score(y_test, y_pred, average="macro")
+
     print("\n" + "=" * 60)
-    print("1D-CNN -- TEST SET RESULTS (best epoch restored)")
+    print("1D-CNN -- FINAL TEST RESULTS")
     print("=" * 60)
+    print(f"Accuracy:            {accuracy:.4f}")
+    print(f"Weighted F1-score:   {f1_weighted:.4f}")
+    print(f"Macro F1-score:      {f1_macro:.4f}")
+    print("\nClassification Report:")
     print(classification_report(
         y_test, y_pred, target_names=encoder.classes_, zero_division=0
     ))
-    print("Confusion matrix:")
+    print("Confusion Matrix:")
     print(confusion_matrix(y_test, y_pred))
 
     model.save(MODEL_OUTPUT_PATH)
     print(f"\nModel saved to {MODEL_OUTPUT_PATH}")
     np.save("quest_label_classes.npy", encoder.classes_)
+    return {
+    "seed": seed,
+    "accuracy": accuracy,
+    "f1_weighted": f1_weighted,
+    "f1_macro": f1_macro,
+}
 
 
 if __name__ == "__main__":
-    main()
+
+    results = []
+
+    for seed in SEEDS:
+        result = main(seed)
+        results.append(result)
+
+    # Convert results to arrays
+    accuracies = np.array([r["accuracy"] for r in results])
+    f1_weighted_scores = np.array([r["f1_weighted"] for r in results])
+    f1_macro_scores = np.array([r["f1_macro"] for r in results])
+
+    print("\n" + "=" * 60)
+    print("MULTI-SEED FINAL RESULTS")
+    print("=" * 60)
+
+    print("\nIndividual results:")
+
+    for r in results:
+        print(
+            f"Seed {r['seed']}: "
+            f"Accuracy={r['accuracy']:.4f} | "
+            f"Weighted F1={r['f1_weighted']:.4f} | "
+            f"Macro F1={r['f1_macro']:.4f}"
+        )
+
+    print("\n" + "-" * 60)
+    print("MEAN ± STANDARD DEVIATION")
+    print("-" * 60)
+
+    print(
+        f"Accuracy:        "
+        f"{accuracies.mean():.4f} ± {accuracies.std(ddof=1):.4f}"
+    )
+
+    print(
+        f"Weighted F1:     "
+        f"{f1_weighted_scores.mean():.4f} ± "
+        f"{f1_weighted_scores.std(ddof=1):.4f}"
+    )
+
+    print(
+        f"Macro F1:        "
+        f"{f1_macro_scores.mean():.4f} ± "
+        f"{f1_macro_scores.std(ddof=1):.4f}"
+    )
