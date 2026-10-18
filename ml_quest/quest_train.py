@@ -28,7 +28,10 @@ from tensorflow import keras
 # --- Reproducibility: must happen before any model/layer is built ---
 #SEED = 42
 #keras.utils.set_random_seed(SEED)
-SEEDS = [42, 0, 1, 7, 123]
+#SEEDS = [42, 0, 1, 7, 123]
+#to run 200 seeds 
+NUM_SEEDS = 100
+SEEDS = range(NUM_SEEDS)
 os.environ["TF_DETERMINISTIC_OPS"] = "1"  # extra safety for CPU determinism
 
 from quest_dataset import load_all_sessions, make_windows, WINDOW_SIZE, get_feature_columns
@@ -152,6 +155,8 @@ if __name__ == "__main__":
     for seed in SEEDS:
         result = main(seed)
         results.append(result)
+        #added now when running 200 seeds to save results after each seed
+        np.save("multi_seed_results.npy", results)
 
     # Convert results to arrays
     accuracies = np.array([r["accuracy"] for r in results])

@@ -1,9 +1,9 @@
-# GestureVR — Wireless Dual-IMU Wrist Joint Tracking & Gesture Recognition
+# GestureVR — Meta Quest Hand-Tracking Gesture Recognition
 
-Tracks the wrist joint using two MPU6050 IMUs (one on the forearm, one
-on the hand), streams orientation wirelessly between two ESP32 boards,
-and trains a 1D-CNN gesture classifier on the resulting joint-rotation
-data.
+The current project focus and final ML deliverable is the `ml_quest/`
+pipeline. It trains and evaluates gesture classifiers from Meta Quest
+hand-tracking recordings. The ESP32 dual-IMU and Unity scripts remain
+supporting/experimental work from earlier project stages.
 
 ## Project status / roadmap
 
@@ -14,11 +14,12 @@ data.
 - [x] Per-sensor calibration + CSV data logging
 - [x] Wireless dual-ESP32 setup (ESP-NOW) — hand sensor fully decoupled
       from the forearm/receiver board
-- [x] Gesture dataset collection (7 classes)
-- [x] 1D-CNN training with proper session-based validation split
-- [x] Real-time inference (console predictions)
+- [x] Quest hand-tracking dataset collection
+- [x] Quest 1D-CNN training with session-based train/validation/test splits
+- [x] Multi-seed evaluation and saved aggregate results
+- [x] Classical frame-level baselines (Random Forest and SVM)
 - [ ] Unity live visualization (forearm/hand rig)
-- [ ] Real-time inference -> Unity gesture events
+- [ ] Real-time Quest inference -> Unity gesture events
 - [ ] Hand-side board moved to battery power (currently USB-powered
       for development)
 
@@ -33,7 +34,7 @@ data.
       |
       |  USB Serial
       v
-   Your PC (collect_data.py / infer_realtime.py / Unity)
+   Your PC (supporting firmware tools / Unity)
 ```
 
 - **Sensor A** (`0x68`) — forearm — reference segment
@@ -59,7 +60,7 @@ GestureVR/
 │   ├── dual_mpu6050_calibrated/     WIRED dual-sensor version (kept as
 │   │                                 a fallback / debugging reference)
 │   │
-│   ├── get_mac_address/             Run once on the Main ESP32 to get
+│   ├── get_mac_adress/              Run once on the Main ESP32 to get
 │   │                                 the MAC address needed by the
 │   │                                 transmitter firmware
 │   │
@@ -73,22 +74,22 @@ GestureVR/
 │                                     combined CSV over USB:
 │                                     timestamp_ms,label,aw,ax,ay,az,bw,bx,by,bz
 │
-├── ml/
-│   ├── data/raw/                    Labeled gesture CSVs land here
-│   ├── collect_data.py              Talks to the Main ESP32, records
-│   │                                 labeled gesture sessions to CSV
-│   ├── dataset.py                   Loads CSVs, builds windows —
-│   │                                 grouped by (session, label) so
-│   │                                 windows never cross a session
-│   │                                 boundary
-│   ├── model.py                     1D-CNN architecture
-│   ├── train.py                     Trains the model with a
-│   │                                 SESSION-based train/val split
-│   │                                 (not a random window split — see
-│   │                                 "Methodology notes" below)
-│   ├── infer_realtime.py            Live serial -> window -> predict
-│   │                                 -> gesture label (console output;
-│   │                                 Unity hookup still TODO)
+├── ml_quest/
+│   ├── data/raw/                    Quest sessions:
+│   │                                 <label>_<session>/hand_path.csv
+│   ├── quest_dataset.py             Pivots Quest's long CSV format,
+│   │                                 encodes cyclic angles, and builds
+│   │                                 fixed-length windows
+│   ├── model.py                     Quest 1D-CNN architecture
+│   ├── quest_train.py               Multi-seed CNN training and held-out
+│   │                                 test-set evaluation
+│   ├── quest_baseline.py            Random Forest and SVM frame-level
+│   │                                 baselines with grid search
+│   ├── splits.py                    Session-based splitting utilities
+│   ├── quest_gesture_model.keras    Trained Quest CNN (Keras format)
+│   ├── quest_gesture_model.h5       Trained Quest CNN (HDF5 format)
+│   ├── quest_label_classes.npy      Class-label mapping
+│   ├── multi_seed_results.npy       Saved multi-seed metrics
 │   └── requirements.txt
 │
 ├── unity/
@@ -106,39 +107,100 @@ GestureVR/
 └── README.md
 ```
 
-## Gesture set (current)
+## Quest dataset and features
 
-7 classes, chosen to be physically distinguishable via forearm/hand
-relative rotation alone:
+Each recording is stored as
+`ml_quest/data/raw/<gesture_label>_<session_number>/hand_path.csv`.
+The CSV contains one row per tracked object and timestep:
 
-1. `idle` — no motion (baseline class)
-2. `wrist_flex_up`
-3. `wrist_flex_down`
-4. `wrist_rotate`
-5. `wave`
-6. `arm_up`
-7. `arm_down`
+```text
+t,object,x,y,z,pitch,yaw,roll
+```
 
-Recognizable with this setup: any wrist flexion/extension, radial/ulnar
-deviation, forearm rotation, and compound dynamic gestures built from
-those. **Not** recognizable: individual finger gestures (no
-finger-mounted sensors) or absolute hand position in a room (IMUs give
-orientation, not position — see `docs/wiring.md` / project notes for
-why).
+The loader combines `LeftHandAnchor`, `RightHandAnchor`, and `Head` into
+one row per timestep. Each object contributes position (`x`, `y`, `z`)
+and sine/cosine encodings of the three Euler angles, for 27 features per
+timestep. Lost-tracking frames are detected and windows with excessive
+dropout are discarded. The available labels are determined from the
+session folder names in `ml_quest/data/raw/`.
 
 ## Workflow
 
-### 1. Verify hardware
+### 1. Prepare the Quest dataset
+
+Place each Quest recording at:
+
+```text
+ml_quest/data/raw/<gesture_label>_<session_number>/hand_path.csv
+```
+
+Use at least three separate sessions per class so the train,
+validation, and test splits can all contain held-out recordings. Keep
+the label and session number in the folder name, for example
+`wave_1/hand_path.csv`.
+
+### 2. Install ML dependencies
+
+```powershell
+cd ml_quest
+pip install -r requirements.txt
+```
+
+### 3. Inspect the dataset
+
+```powershell
+python quest_dataset.py
+```
+
+This reports the loaded sessions, labels, and generated windows.
+
+### 4. Train and evaluate the Quest CNN
+
+```powershell
+python quest_train.py
+```
+
+`quest_train.py` runs the configured multi-seed experiment, reports
+accuracy and weighted/macro F1 on the held-out test set, and writes:
+
+- `quest_gesture_model.h5`
+- `quest_label_classes.npy`
+- `multi_seed_results.npy`
+
+The existing `quest_gesture_model.keras` is an additional Keras-format
+model artifact.
+
+### 5. Run classical baselines
+
+From `ml_quest/`, run either:
+
+```powershell
+python quest_baseline.py
+python quest_baseline.py --rotation-only
+python quest_baseline.py --no-velocity
+```
+
+The baseline compares Random Forest and SVM classifiers using
+session-level splits. It reports accuracy, balanced accuracy, weighted
+F1, classification reports, and confusion matrices.
+
+### 6. Optional ESP32/Unity work
+
+The following hardware workflow is retained for the supporting
+dual-IMU prototype; it is not required to train or evaluate the
+`ml_quest` deliverable.
+
+#### Verify hardware
 Flash `firmware/i2c_scanner/i2c_scanner.ino` on a single ESP32 with
 both sensors wired to it, confirm both `0x68` and `0x69` appear in
 Serial Monitor.
 
-### 2. Get the Main ESP32's MAC address
-Flash `firmware/get_mac_address/get_mac_address.ino` to the ESP32 that
+#### Get the Main ESP32's MAC address
+Flash `firmware/get_mac_adress/get_mac_adress.ino` to the ESP32 that
 will stay wired to Sensor A and tethered to your PC. Copy the printed
 MAC address.
 
-### 3. Flash the wireless firmware
+#### Flash the wireless firmware
 - Hardcode the Main ESP32's MAC address into
   `firmware/hand_esp32_transmitter/hand_esp32_transmitter.ino`
   (`receiverMac[]`), then flash it to the SECOND ESP32 (wired to
@@ -151,65 +213,31 @@ MAC address.
   moving each sensor independently only changes that sensor's 4
   columns.
 
-### 4. Collect gesture data
-```
-cd ml
-pip install -r requirements.txt
-python collect_data.py
-```
-For each gesture: type the label, Enter, perform the gesture
-**continuously and repeatedly** (not a single static hold — the model
-needs to learn the motion pattern, not a fixed end pose), Enter to
-stop. Record **at least 2 separate sessions per gesture** (ideally
-varying arm position/strap tightness between sessions) — this is
-required for a trustworthy validation score, not just a nice-to-have
-(see "Methodology notes" below). Files land in `ml/data/raw/`.
-
-### 5. Sanity-check the dataset
-```
-python dataset.py
-```
-Reports how many windows were built per label and across how many
-sessions. Look for every class having 2+ sessions and roughly balanced
-window counts.
-
-### 6. Train the model
-```
-python train.py
-```
-Produces `gesture_model.h5` and `label_classes.npy`. Watch for the "WARNING: '<label>' has only 1 recording session" messages — any class showing this needs another recording session before its validation score can be trusted.
-
-### 7. Real-time inference
-```
-python infer_realtime.py
-```
-Streams live gesture predictions to the console.
-
-### 8. Unity integration (not yet built)
+#### Unity integration (not yet built)
 Close the Arduino Serial Monitor (only one program can hold the port).
 Open the Unity project, attach `DualIMUReceiver.cs` to a manager
 object, wire up Forearm/Hand transforms, set the correct COM port,
-press Play. Wiring `infer_realtime.py`'s predicted label onward into
-Unity (not just raw orientation) is the next planned step.
+press Play. Connecting the Quest model's predicted label to Unity is
+the next planned integration step.
 
 ## Methodology notes
 
-**Session-based train/validation split.** `dataset.py` builds
+**Session-based train/validation/test split.** `quest_dataset.py` builds
 overlapping windows via a sliding stride, so adjacent windows from the
-same recording are highly similar. `train.py` therefore splits by
-whole recording **session** (never by individual window) — an entire
-session goes fully to train or fully to validation. A random
-window-level split would let the model "see" near-duplicates of
-validation data during training, producing an inflated, untrustworthy
-accuracy score. A class with only one recorded session cannot be
-validated yet; record a second session for any such class.
+same recording are highly similar. `quest_train.py` and
+`quest_baseline.py` therefore split by whole recording **session**
+(never by individual window or frame). An entire session goes fully to
+train, validation, or test. A random window-level split would let a
+model see near-duplicates of evaluation data during training, producing
+an inflated, untrustworthy score. Use at least three sessions per class
+for a meaningful three-way split.
 
-**Windows never cross a session boundary.** `dataset.py` groups rows
-by `(session_id, label)` before slicing windows, so multiple separate
-`idle` recordings (for example) are never concatenated and sliced
-across their boundary as if they were one continuous recording.
+**Windows never cross a session boundary.** `quest_dataset.py` groups
+rows by `session_id` before slicing windows, so separate recordings of
+the same gesture are never concatenated and sliced across their
+boundary as if they were one continuous recording.
 
-**Calibration.** Every physical MPU6050 chip has its own manufacturing
+**IMU calibration (supporting prototype).** Every physical MPU6050 chip has its own manufacturing
 bias in both the accelerometer and gyroscope. The firmware averages
 ~500 samples per sensor at boot (while held still) and feeds the
 resulting offsets into the DMP before enabling it, which measurably
