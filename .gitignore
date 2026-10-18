@@ -8,6 +8,7 @@ venv/
 ml/gesture_model.h5
 ml/label_classes.npy
 ml/data/raw/*.csv
+ml_quest/__pycache__/
 
 # Unity
 unity/Library/

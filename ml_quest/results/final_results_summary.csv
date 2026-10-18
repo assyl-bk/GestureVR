@@ -1,0 +1,4 @@
+model,submitted_accuracy,observed_accuracy,balanced_accuracy,weighted_f1,split_seed,status,configuration
+1D-CNN,0.8827240773,0.8827240773,,,100 seeds,verified,100 random training seeds on one session-based held-out test split
+Random Forest,0.828,0.8279569892,0.8265037672,0.8291080219,85,reproduced_by_rounding,position + orientation + velocity; every 20th clean frame; 10 trees; max_features=sqrt; random_state=42
+SVM,0.873,0.8709677419,0.8803504643,0.8710941575,85,exact_value_not_reproduced,position + orientation + velocity; every 20th clean frame; standard scaling; RBF; C=100; gamma=scale; class_weight=None

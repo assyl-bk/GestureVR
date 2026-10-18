@@ -1,0 +1,29 @@
+{
+  "cnn": {
+    "accuracy_mean": 0.8827240773,
+    "accuracy_sample_std": 0.0511446487,
+    "runs": 100,
+    "figure": "cnn_test_accuracy_distribution.png",
+    "status": "verified"
+  },
+  "random_forest": {
+    "submitted_accuracy": 0.828,
+    "observed_accuracy": 0.8279569892473119,
+    "balanced_accuracy": 0.8265037671597549,
+    "weighted_f1": 0.8291080219327942,
+    "split_seed": 85,
+    "configuration": "position + orientation + velocity; every 20th clean frame; 10 trees; max_features=sqrt; random_state=42",
+    "status": "reproduced_by_rounding",
+    "figure": "random_forest_verified_result.png"
+  },
+  "svm": {
+    "submitted_accuracy": 0.873,
+    "observed_accuracy": 0.8709677419354839,
+    "balanced_accuracy": 0.8803504642940188,
+    "weighted_f1": 0.87109415745908,
+    "split_seed": 85,
+    "configuration": "position + orientation + velocity; every 20th clean frame; standard scaling; RBF; C=100; gamma=scale; class_weight=None",
+    "status": "exact_submitted_value_not_reproduced",
+    "figure": "svm_closest_verified_result.png"
+  }
+}
